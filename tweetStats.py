@@ -2,8 +2,6 @@
 
 import os
 import tweepy
-import pathlib
-import configparser
 
 
 def parseConfig():
