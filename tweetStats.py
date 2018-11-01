@@ -1,30 +1,27 @@
 #!/usr/bin/env python3
 
+import os
 import tweepy
 import pathlib
 import configparser
 
 
-def validateConfig(config_file):
-    "Validate that the config file exists and is a file."
-    return pathlib.Path(config_file).is_file()
+def parseConfig():
+    keys = ['api_key',
+            'api_secret',
+            'access_token',
+            'access_secret',
+            'username']
 
+    data = {}
 
-def parseConfig(config_file):
-    "Parse the config file and return user keys."
+    for k in keys:
+        if k not in os.environ:
+            raise Exception('{} not found in environment'.format(k))
+        else:
+            data[k] = os.environ[k]
 
-    try:
-        validateConfig(config_file)
-    except FileNotFoundError:
-        raise 'unable to find {}'.format(config_file)
-
-    parser = configparser.ConfigParser()
-    parser.read(config_file)
-    config = dict((section, dict((option, parser.get(section, option))
-                  for option in parser.options(section)))
-                  for section in parser.sections())
-
-    return(config)
+    return(data)
 
 
 def twitterApi(api_key, api_secret, access_token, access_secret):
@@ -42,14 +39,14 @@ def getUser(twitter_api, user):
 
 def main():
     "Do the main."
-    data = parseConfig('tstats.conf')
+    data = parseConfig()
 
-    twitter = twitterApi(data['api']['key'],
-                         data['api']['secret'],
-                         data['access']['token'],
-                         data['access']['secret'])
+    twitter = twitterApi(data['api_key'],
+                         data['api_secret'],
+                         data['access_token'],
+                         data['access_secret'])
 
-    user = getUser(twitter, data['user']['username'])
+    user = getUser(twitter, data['username'])
 
     print(user.followers_count)
 
