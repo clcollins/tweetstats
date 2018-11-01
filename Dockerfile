@@ -1,5 +1,7 @@
 FROM python:3.7-alpine
 
+USER 1001
+
 LABEL maintainer 'Chris Collins <collins.christopher@gmail.com'
 
 RUN apk add git \
