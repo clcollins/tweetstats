@@ -1,2 +1,3 @@
 tstats.conf
 secrets.yml
+__pycache__/
