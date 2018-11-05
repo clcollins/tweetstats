@@ -17,6 +17,9 @@ spec:
           - name: tweetstats
             image: chris-test/tweetstats:latest
             imagePullPolicy: Always
+            envFrom:
+            - configMapRef:
+                name: influxdb-config
             env:
             - name: APP_FILE
               value: tweetstats.py
