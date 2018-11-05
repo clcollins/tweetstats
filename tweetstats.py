@@ -47,7 +47,7 @@ def createInfluxDB(client, db_name):
     dbs = client.get_list_database()
     if not any(db['name'] == db_name for db in dbs):
         client.create_database(db_name)
-    client.switch_database(db)
+    client.switch_database(db_name)
 
 
 def initDBClient(host, db, user, password):
