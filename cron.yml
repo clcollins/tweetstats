@@ -1,0 +1,48 @@
+apiVersion: batch/v1beta1
+kind: CronJob
+metadata:
+  name: tweetstats
+  labels:
+    app: tweetstats
+spec:
+  schedule: "*/15 * * * *"
+  jobTemplate:
+    metadata:
+      annotations:
+        alpha.image.policy.openshift.io/resolve-names: "*"
+    spec:
+      template:
+        spec:
+          containers:
+          - name: tweetstats
+            image: chris-test/tweetstats:latest
+            imagePullPolicy: Always
+            env:
+            - name: APP_FILE
+              value: tweetstats.py
+            - name: username
+              valueFrom:
+                secretKeyRef:
+                  name: tstats-config
+                  key: username
+            - name: api_key
+              valueFrom:
+                secretKeyRef:
+                  name: tstats-config
+                  key: api_key
+            - name: api_secret
+              valueFrom:
+                secretKeyRef:
+                  name: tstats-config
+                  key: api_secret
+            - name: access_token
+              valueFrom:
+                secretKeyRef:
+                  name: tstats-config
+                  key: access_token
+            - name: access_secret
+              valueFrom:
+                secretKeyRef:
+                  name: tstats-config
+                  key: access_secret
+          restartPolicy: Never
