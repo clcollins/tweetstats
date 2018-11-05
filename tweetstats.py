@@ -58,22 +58,20 @@ def initDBClient(host, db, user, password):
     return(client)
 
 
-def postData(client, username, followers, time):
-    "Post data to the InfluxDB."
-    json_body = [{
-        "measurement": "followers",
+def createPoint(username, measurement, value, time):
+    "Create a datapoint."
+    json_body = {
+        "measurement": measurement,
         "tags": {
             "user": username
         },
         "time": time,
         "fields": {
-            "value": followers
+            "value": value
         }
-    }]
+    }
 
-    print(json_body)
-
-    client.write_points(json_body)
+    return json_body
 
 
 def main():
@@ -95,7 +93,21 @@ def main():
 
     createInfluxDB(client, data['INFLUXDB_DATABASE'])
 
-    postData(client, data['username'], user.followers_count, time)
+    json_body = []
+
+    data_points = {
+        "followers_count": user.followers_count,
+        "friends_count": user.friends_count,
+        "listed_count": user.listed_count,
+        "favourites_count": user.favourites_count,
+        "statuses_count": user.statuses_count
+    }
+
+    for key, value in data_points.items():
+        json_body.append(createPoint(data['username'], key, value, time))
+
+    print(json_body)
+    client.write_points(json_body)
 
 
 if __name__ == "__main__":
