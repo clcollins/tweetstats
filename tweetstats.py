@@ -145,6 +145,7 @@ def processFollowers(args):
     mysql = initMYSQL(creds['mysql'])
     storeFollowers(mysql, creds['mysql']['database'], followers)
 
+    # Test Locally:
     # sudo podman run -e MYSQL_ROOT_PASSWORD=root \
     #                 -p 127.0.0.1:3306:3306 -it docker.io/mariadb:10.4
 
@@ -204,6 +205,9 @@ def processMetrics(args):
     username, metrics = getMetricsCount(initAPI(creds['twitter']))
     influxdb = initInfluxDB(creds['influxdb'])
     storeMetrics(influxdb, creds['influxdb']['database'], username, metrics)
+
+    # Test Locally:
+    # sudo podman run -p 127.0.0.1:8086:8086 -it docker.io/influxdb:1.7-alpine
 
 
 def main():
