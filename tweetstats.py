@@ -8,16 +8,25 @@ from influxdb import InfluxDBClient
 from datetime import datetime, timedelta
 
 
-def parseConfig(configfile):
+def parseConfig(configfile, verbose=False):
     """Get authentication data from ENV variables."""
+    if verbose:
+        print("Parsing configfile {conf}".format(conf=configfile))
+
     config = configparser.ConfigParser()
     config.read(configfile)
+
+    if verbose:
+        print(("Config sections found: {sections}"
+               .format(sections=config.sections())))
 
     return config
 
 
-def initAPI(creds):
+def initAPI(creds, verbose=False):
     """Authenticate and create an API instance."""
+    if verbose:
+        print("Initializing Twitter API Client")
 
     auth = tweepy.OAuthHandler(creds['consumer_key'],
                                creds['consumer_secret'])
@@ -32,8 +41,11 @@ def initAPI(creds):
                       retry_errors=5)
 
 
-def initInfluxDB(creds):
+def initInfluxDB(creds, verbose=False):
     """Setup the InfluxDB connection."""
+    if verbose:
+        print("Initializing InfluxDB Client")
+
     conn = InfluxDBClient(host=creds['host'],
                           username=creds['user'],
                           password=creds['password'])
@@ -41,8 +53,11 @@ def initInfluxDB(creds):
     return conn
 
 
-def initMYSQL(creds):
+def initMYSQL(creds, verbose=False):
     """Setup MySQL db connection."""
+    if verbose:
+        print("Initializing MySQL Client")
+
     conn = mysql.connector.connect(
            host=creds['host'],
            user=creds['user'],
@@ -52,10 +67,15 @@ def initMYSQL(creds):
     return conn
 
 
-def getCurrentFollowers(api, count=None):
+def getCurrentFollowers(api, count=None, verbose=False):
     """Get the authenticated user's followers and return a dict with data."""
     # Gather data for authenticated user.
     user = api.me()
+
+    if verbose:
+        print(("Gathering follower data for {user}; "
+               "number to gather = {count}"
+               .format(user=user.screen_name, count=count)))
 
     if count == -1:
         followers = tweepy.Cursor(api.followers, id=user.id).items()
@@ -75,8 +95,11 @@ def getCurrentFollowers(api, count=None):
     return gather
 
 
-def storeFollowers(connection, database, followers):
+def storeFollowers(connection, database, followers, verbose=False):
     """Parse follower data and put it into the db."""
+    if verbose:
+        print("Storing follower information in MariaDB")
+
     table = 'followers'
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     yesterday = ((datetime.now() - timedelta(days=1))
@@ -91,7 +114,8 @@ def storeFollowers(connection, database, followers):
                    " gone boolean);".format(database, table))
 
     for follower in followers:
-        print(follower.screen_name)
+        if verbose:
+            print("Storing {follower}".format(follower=follower.screen_name))
         sql = ("INSERT INTO {}.{}"
                " (id,screen_name,name,"
                # "twitter_json,"
@@ -123,6 +147,9 @@ def storeFollowers(connection, database, followers):
         # If the last_seen value is less than (before) yesterday, they can
         # be considered to have unfollowed
         if last_seen.strftime('%Y-%m-%d %H:%M:%S') < yesterday:
+            if verbose:
+                print(("User {user} has unfollowed"
+                       .format(user=follower.screen_name)))
             sql = ("UPDATE {database}.{table}"
                    " SET gone = 1 WHERE id = '{id}'"
                    .format(database=database, table=table, id=follower.id))
@@ -140,20 +167,28 @@ def storeFollowers(connection, database, followers):
 
 def processFollowers(args):
     """Authenticate and gather followers."""
-    creds = parseConfig(args.configfile)
-    followers = getCurrentFollowers(initAPI(creds['twitter']), args.count)
-    mysql = initMYSQL(creds['mysql'])
-    storeFollowers(mysql, creds['mysql']['database'], followers)
+    if args.verbose:
+        print("Processing follower data")
+
+    creds = parseConfig(args.configfile, args.verbose)
+    followers = getCurrentFollowers(initAPI(creds['twitter'],
+                                            args.verbose),
+                                    args.count,
+                                    args.verbose)
+    mysql = initMYSQL(creds['mysql'], args.verbose)
+    storeFollowers(mysql, creds['mysql']['database'], followers, args.verbose)
 
     # Test Locally:
     # sudo podman run -e MYSQL_ROOT_PASSWORD=root \
     #                 -p 127.0.0.1:3306:3306 -it docker.io/mariadb:10.4
 
 
-def getMetricsCount(api):
+def getMetricsCount(api, verbose=False):
     """Get metrics for the user from the Twitter API."""
-
     user = api.me()
+
+    if verbose:
+        print("Gathering metrics for {user}".format(user=user.screen_name))
 
     data_points = {
         "followers_count": user.followers_count,
@@ -166,8 +201,11 @@ def getMetricsCount(api):
     return user.screen_name, data_points
 
 
-def storeMetrics(connection, database, username, metrics):
+def storeMetrics(connection, database, username, metrics, verbose=False):
     """Parse follower data and put it into the db."""
+    if verbose:
+        print("Storing metrics data")
+
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     dbs = connection.get_list_database()
 
@@ -178,13 +216,20 @@ def storeMetrics(connection, database, username, metrics):
     json_body = []
 
     for key, value in metrics.items():
-        json_body.append(createPoint(username, key, value, now))
+        json_body.append(createPoint(username, key, value, now, verbose))
+
+    if verbose:
+        print("Writing metrics data to InfluxDB")
 
     connection.write_points(json_body)
 
 
-def createPoint(username, measurement, value, time):
+def createPoint(username, measurement, value, time, verbose=False):
     "Create a datapoint."
+    if verbose:
+        print(("Creating datapoint from {measurement}: {value}"
+               .format(measurement=measurement, value=value)))
+
     datapoint = {
         "measurement": measurement,
         "tags": {
@@ -201,10 +246,17 @@ def createPoint(username, measurement, value, time):
 
 def processMetrics(args):
     """Authenticate and gather metrics."""
-    creds = parseConfig(args.configfile)
-    username, metrics = getMetricsCount(initAPI(creds['twitter']))
-    influxdb = initInfluxDB(creds['influxdb'])
-    storeMetrics(influxdb, creds['influxdb']['database'], username, metrics)
+    if args.verbose:
+        print("Processing Twitter metrics")
+    creds = parseConfig(args.configfile, args.verbose)
+    username, metrics = (getMetricsCount(initAPI(creds['twitter'],
+                                         args.verbose), args.verbose))
+    influxdb = initInfluxDB(creds['influxdb'], args.verbose)
+    storeMetrics(influxdb,
+                 creds['influxdb']['database'],
+                 username,
+                 metrics,
+                 args.verbose)
 
     # Test Locally:
     # sudo podman run -p 127.0.0.1:8086:8086 -it docker.io/influxdb:1.7-alpine
@@ -216,6 +268,9 @@ def main():
     parser.add_argument('-f', '--configfile', action='store',
                         default='.tstats.cfg',
                         help='Path to alternate configuration file')
+    parser.add_argument('-v', '--verbose', action='store_true',
+                        default=False,
+                        help='Enable verbose output')
 
     subparsers = parser.add_subparsers(title='subcommands')
 
