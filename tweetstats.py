@@ -97,6 +97,8 @@ def getCurrentFollowers(api, count=None, verbose=False):
 
 def storeFollowers(connection, database, followers, verbose=False):
     """Parse follower data and put it into the db."""
+    debug = True
+
     if verbose:
         print("Storing follower information in MariaDB")
 
@@ -107,11 +109,17 @@ def storeFollowers(connection, database, followers, verbose=False):
     cursor = connection.cursor()
     cursor.execute("SET NAMES utf8mb4")
     cursor.execute("CREATE DATABASE IF NOT EXISTS {}".format(database))
-    cursor.execute("CREATE TABLE IF NOT EXISTS {}.{}"
-                   " (id varchar(70) primary key, screen_name varchar(70),"
-                   " name varchar(70), twitter_json JSON,"
-                   " first_seen datetime, last_seen datetime,"
-                   " gone boolean);".format(database, table))
+
+    sql = ("CREATE TABLE IF NOT EXISTS {}.{}"
+           " (id varchar(70) primary key, screen_name varchar(70),"
+           " name varchar(70), twitter_json longtext,"
+           " first_seen datetime, last_seen datetime,"
+           " gone boolean);".format(database, table))
+
+    if debug:
+        print(sql)
+
+    cursor.execute(sql)
 
     for follower in followers:
         if verbose:
@@ -179,8 +187,7 @@ def processFollowers(args):
     storeFollowers(mysql, creds['mysql']['database'], followers, args.verbose)
 
     # Test Locally:
-    # sudo podman run -e MYSQL_ROOT_PASSWORD=root \
-    #                 -p 127.0.0.1:3306:3306 -it docker.io/mariadb:10.4
+    #
 
 
 def getMetricsCount(api, verbose=False):
