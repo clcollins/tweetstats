@@ -1,3 +1,6 @@
 tstats.conf
+.tstats.cfg
+tstats.ini
+tstats_config
 secrets.yml
 __pycache__/
