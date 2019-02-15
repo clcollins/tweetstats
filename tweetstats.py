@@ -8,6 +8,23 @@ from influxdb import InfluxDBClient
 from datetime import datetime, timedelta
 
 
+def devBail():
+    """BAIL OUT!"""
+
+    import sys
+    sys.exit(1)
+
+
+def getTheTime(delta=0, raw=False):
+    """Get formatted dates from 'now'."""
+
+    if raw:
+        return (datetime.now() + timedelta(days=delta))
+    else:
+        return ((datetime.now() + timedelta(days=delta))
+                .strftime('%Y-%m-%d %H:%M:%S'))
+
+
 def parseConfig(configfile, verbose=False):
     """Get authentication data from ENV variables."""
     if verbose:
@@ -95,17 +112,61 @@ def getCurrentFollowers(api, count=None, verbose=False):
     return gather
 
 
-def storeFollowers(connection, database, followers, verbose=False):
-    """Parse follower data and put it into the db."""
+def getUnfollowCount(connection, database, table, verbose=False):
+    """Count and post folks who unfollowed today."""
     debug = True
+
+    if verbose:
+        print("Counting and saving unfollow stats")
+
+    cursor = connection.cursor()
+    cursor.execute("SET NAMES utf8mb4")
+    cursor.execute("CREATE DATABASE IF NOT EXISTS {}".format(database))
+
+    sql = ("CREATE TABLE IF NOT EXISTS {}.{}"
+           " (id varchar(70) primary key, screen_name varchar(70),"
+           " name varchar(70), twitter_json longtext,"
+           " first_seen datetime, last_seen datetime,"
+           " gone boolean);".format(database, table))
+
+    if debug:
+        print(sql)
+
+    cursor.execute(sql)
+    connection.commit()
+
+    # Drop hours/minutes
+    yesterday = getTheTime(-1, raw=True).date()
+    day_before_yesterday = getTheTime(-2, raw=True).date()
+
+    # They left yesterday if last_seen is between two days ago and yesterday
+    sql = ("SELECT COUNT(*) "
+           "FROM {}.{} "
+           "WHERE (last_seen BETWEEN "
+           "'{}' AND '{}');".format(database, table,
+                                    day_before_yesterday, yesterday))
+
+    if debug:
+        print(sql)
+
+    cursor.execute(sql)
+    count = cursor.fetchone()[0]
+
+    if verbose:
+        print("Unfollows count: {}".format(count))
+
+    cursor.close()
+
+    return count
+
+
+def storeFollowers(connection, database, table, followers, verbose=False):
+    """Parse follower data and put it into the db."""
+    debug = False
 
     if verbose:
         print("Storing follower information in MariaDB")
 
-    table = 'followers'
-    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    yesterday = ((datetime.now() - timedelta(days=1))
-                 .strftime('%Y-%m-%d %H:%M:%S'))
     cursor = connection.cursor()
     cursor.execute("SET NAMES utf8mb4")
     cursor.execute("CREATE DATABASE IF NOT EXISTS {}".format(database))
@@ -124,6 +185,9 @@ def storeFollowers(connection, database, followers, verbose=False):
     for follower in followers:
         if verbose:
             print("Storing {follower}".format(follower=follower.screen_name))
+
+        now = getTheTime(0)
+
         sql = ("INSERT INTO {}.{}"
                " (id,screen_name,name,"
                # "twitter_json,"
@@ -143,7 +207,6 @@ def storeFollowers(connection, database, followers, verbose=False):
                              follower.screen_name,
                              follower.name,
                              now))
-        # connection.commit()
 
         sql = ("SELECT last_seen from {database}.{table}"
                " WHERE id={id}").format(database=database,
@@ -154,7 +217,7 @@ def storeFollowers(connection, database, followers, verbose=False):
 
         # If the last_seen value is less than (before) yesterday, they can
         # be considered to have unfollowed
-        if last_seen.strftime('%Y-%m-%d %H:%M:%S') < yesterday:
+        if last_seen.strftime('%Y-%m-%d %H:%M:%S') < getTheTime(-1):
             if verbose:
                 print(("User {user} has unfollowed"
                        .format(user=follower.screen_name)))
@@ -170,7 +233,6 @@ def storeFollowers(connection, database, followers, verbose=False):
 
     connection.commit()
     cursor.close()
-    connection.close()
 
 
 def processFollowers(args):
@@ -178,17 +240,72 @@ def processFollowers(args):
     if args.verbose:
         print("Processing follower data")
 
+    table = 'followers'
+
     creds = parseConfig(args.configfile, args.verbose)
     followers = getCurrentFollowers(initAPI(creds['twitter'],
                                             args.verbose),
                                     args.count,
                                     args.verbose)
     mysql = initMYSQL(creds['mysql'], args.verbose)
-    storeFollowers(mysql, creds['mysql']['database'], followers, args.verbose)
+    storeFollowers(mysql, creds['mysql']['database'],
+                   table, followers, args.verbose)
 
-    # Test Locally:
-    # sudo podman run -e MYSQL_ROOT_PASSWORD=root  -p 127.0.0.1:3306:3306 \
-    #                 -it docker.io/centos/mariadb-101-centos7:10.1
+    # Close conn
+    mysql.close()
+
+
+def processUnfollows(args):
+    """Count and store unfollows since yesterday"""
+    if args.verbose:
+        print("Processing unfollow data")
+
+    table = 'followers'
+
+    creds = parseConfig(args.configfile, args.verbose)
+    username = (initAPI(creds['twitter'], args.verbose)).me().screen_name
+    mysql = initMYSQL(creds['mysql'], args.verbose)
+    count = getUnfollowCount(mysql, creds['mysql']['database'],
+                             table, args.verbose)
+
+    # Close conn
+    mysql.close()
+
+    influxdb = initInfluxDB(creds['influxdb'], args.verbose)
+    storeUnfollowCount(influxdb,
+                       creds['influxdb']['database'],
+                       username,
+                       count,
+                       args.verbose)
+
+
+def storeUnfollowCount(connection, database, username, count, verbose=False):
+    """Create a datapoint and write the unfollow count into InfluxDB"""
+    debug = True
+
+    if verbose:
+        print("Writing the unfollow count to InfluxDB: {}".format(count))
+
+    json_body = []
+    json_body.append(createPoint(username, 'unfollows', count,
+                                 getTheTime(0), verbose))
+
+    if verbose:
+        print("Writing metrics data to InfluxDB")
+
+    if debug:
+        print(json_body)
+
+    dbs = connection.get_list_database()
+
+    if not any(db['name'] == database for db in dbs):
+        if verbose:
+            print(("Influx database {} does not exist; "
+                   "creating it".format(database)))
+        connection.create_database(database)
+    connection.switch_database(database)
+
+    connection.write_points(json_body)
 
 
 def getMetricsCount(api, verbose=False):
@@ -211,23 +328,31 @@ def getMetricsCount(api, verbose=False):
 
 def storeMetrics(connection, database, username, metrics, verbose=False):
     """Parse follower data and put it into the db."""
+    debug = True
+
     if verbose:
         print("Storing metrics data")
 
-    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     dbs = connection.get_list_database()
 
     if not any(db['name'] == database for db in dbs):
+        if verbose:
+            print(("Influx database {} does not exist; "
+                   "creating it".format(database)))
         connection.create_database(database)
     connection.switch_database(database)
 
     json_body = []
 
     for key, value in metrics.items():
-        json_body.append(createPoint(username, key, value, now, verbose))
+        json_body.append(createPoint(username, key, value,
+                                     getTheTime(0), verbose))
 
     if verbose:
         print("Writing metrics data to InfluxDB")
+
+    if debug:
+        print(json_body)
 
     connection.write_points(json_body)
 
@@ -266,9 +391,6 @@ def processMetrics(args):
                  metrics,
                  args.verbose)
 
-    # Test Locally:
-    # sudo podman run -p 127.0.0.1:8086:8086 -it docker.io/influxdb:1.7-alpine
-
 
 def main():
     """Parse command line arguments and continue on."""
@@ -295,8 +417,20 @@ def main():
                            help='Limit API query for followers to X number.')
     followers.set_defaults(func=processFollowers)
 
+    unfollows = subparsers.add_parser(
+        'unfollows',
+        description=('Count and store unfollow information since yesterday'))
+    unfollows.set_defaults(func=processUnfollows)
+
     args = parser.parse_args()
     args.func(args)
+
+    # Test Locally:
+    # sudo podman run -e MYSQL_ROOT_PASSWORD=root  -p 127.0.0.1:3306:3306 \
+    #                 -it docker.io/centos/mariadb-101-centos7:10.1
+
+    # Test Locally:
+    # sudo podman run -p 127.0.0.1:8086:8086 -it docker.io/influxdb:1.7-alpine
 
 
 if __name__ == "__main__":
