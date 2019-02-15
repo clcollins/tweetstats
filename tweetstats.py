@@ -187,7 +187,8 @@ def processFollowers(args):
     storeFollowers(mysql, creds['mysql']['database'], followers, args.verbose)
 
     # Test Locally:
-    #
+    # sudo podman run -e MYSQL_ROOT_PASSWORD=root  -p 127.0.0.1:3306:3306 \
+    #                 -it docker.io/centos/mariadb-101-centos7:10.1
 
 
 def getMetricsCount(api, verbose=False):
