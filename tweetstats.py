@@ -8,13 +8,6 @@ from influxdb import InfluxDBClient
 from datetime import datetime, timedelta
 
 
-def devBail():
-    """BAIL OUT!"""
-
-    import sys
-    sys.exit(1)
-
-
 def getTheTime(delta=0, raw=False):
     """Get formatted dates from 'now'."""
 
@@ -112,7 +105,7 @@ def getCurrentFollowers(api, count=None, verbose=False):
     return gather
 
 
-def getUnfollowCount(connection, database, table, verbose=False):
+def getUnfollowers(connection, database, table, verbose=False):
     """Count and post folks who unfollowed today."""
     debug = True
 
@@ -136,28 +129,32 @@ def getUnfollowCount(connection, database, table, verbose=False):
     connection.commit()
 
     # Drop hours/minutes
-    yesterday = getTheTime(-1, raw=True).date()
     day_before_yesterday = getTheTime(-2, raw=True).date()
 
+    # NOTE: I'm not sure this is working correctly, or an accurate way
+    # to record this data.  A more accurate way would be to have a table with
+    # *every* time the user was seen, or to store the last time the check
+    # was run, and compare against that.
+
     # They left yesterday if last_seen is between two days ago and yesterday
-    sql = ("SELECT COUNT(*) "
+    sql = ("SELECT id, screen_name "
            "FROM {}.{} "
-           "WHERE (last_seen BETWEEN "
-           "'{}' AND '{}');".format(database, table,
-                                    day_before_yesterday, yesterday))
+           "WHERE last_seen < '{}' "
+           "AND gone = 0;".format(database, table, day_before_yesterday))
 
     if debug:
         print(sql)
 
     cursor.execute(sql)
-    count = cursor.fetchone()[0]
+    unfollowers = cursor.fetchall()
+    count = len(unfollowers)
 
     if verbose:
-        print("Unfollows count: {}".format(count))
+        print("Unfollowers count: {}".format(count))
 
     cursor.close()
 
-    return count
+    return count, unfollowers
 
 
 def storeFollowers(connection, database, table, followers, verbose=False):
@@ -191,15 +188,15 @@ def storeFollowers(connection, database, table, followers, verbose=False):
         sql = ("INSERT INTO {}.{}"
                " (id,screen_name,name,"
                # "twitter_json,"
-               "first_seen,last_seen)"
+               "first_seen,last_seen, gone)"
                " VALUES (%s,%s,"
                # "'{json}',"
-               "%s,%s,%s)"
+               "%s,%s,%s, 0)"
                " ON DUPLICATE KEY UPDATE"
                " screen_name=%s,"
                " name=%s,"
                # " twitter_json='{json}',"
-               " last_seen=%s").format(database, table)
+               " last_seen=%s, gone=0").format(database, table)
         cursor.execute(sql, (follower.id,
                              follower.screen_name,
                              follower.name,
@@ -208,28 +205,27 @@ def storeFollowers(connection, database, table, followers, verbose=False):
                              follower.name,
                              now))
 
-        sql = ("SELECT last_seen from {database}.{table}"
-               " WHERE id={id}").format(database=database,
-                                        table=table,
-                                        id=follower.id)
-        cursor.execute(sql)
-        last_seen = cursor.fetchone()[0]
+    connection.commit()
+    cursor.close()
 
-        # If the last_seen value is less than (before) yesterday, they can
-        # be considered to have unfollowed
-        if last_seen.strftime('%Y-%m-%d %H:%M:%S') < getTheTime(-1):
-            if verbose:
-                print(("User {user} has unfollowed"
-                       .format(user=follower.screen_name)))
-            sql = ("UPDATE {database}.{table}"
-                   " SET gone = 1 WHERE id = '{id}'"
-                   .format(database=database, table=table, id=follower.id))
-            cursor.execute(sql)
-        else:
-            sql = ("UPDATE {database}.{table}"
-                   " SET gone = 0 WHERE id = '{id}'"
-                   .format(database=database, table=table, id=follower.id))
-            cursor.execute(sql)
+
+def storeUnfollowers(connection, database, table, unfollowers, verbose=False):
+    """Parse unfollower data and put it into the db."""
+
+    if verbose:
+        print("Storing unfollower information in MariaDB")
+
+    cursor = connection.cursor()
+
+    for unfollower in unfollowers:
+        if verbose:
+            print("Storing {unfollower}".format(unfollower=unfollower[1]))
+
+        sql = ("UPDATE {}.{}"
+               " SET gone = 1"
+               " WHERE id = {}").format(database, table, unfollower[0])
+
+        cursor.execute(sql, (unfollower[0]))
 
     connection.commit()
     cursor.close()
@@ -255,36 +251,38 @@ def processFollowers(args):
     mysql.close()
 
 
-def processUnfollows(args):
-    """Count and store unfollows since yesterday"""
+def processUnfollowers(args):
+    """Count and store unfollowers since yesterday"""
     if args.verbose:
-        print("Processing unfollow data")
+        print("Processing unfollower data")
 
     table = 'followers'
 
     creds = parseConfig(args.configfile, args.verbose)
     username = (initAPI(creds['twitter'], args.verbose)).me().screen_name
     mysql = initMYSQL(creds['mysql'], args.verbose)
-    count = getUnfollowCount(mysql, creds['mysql']['database'],
-                             table, args.verbose)
+    count, unfollowers = getUnfollowers(mysql, creds['mysql']['database'],
+                                        table, args.verbose)
 
+    storeUnfollowers(mysql, creds['mysql']['database'],
+                     table, unfollowers, args.verbose)
     # Close conn
     mysql.close()
 
     influxdb = initInfluxDB(creds['influxdb'], args.verbose)
-    storeUnfollowCount(influxdb,
-                       creds['influxdb']['database'],
-                       username,
-                       count,
-                       args.verbose)
+    storeUnfollowerCount(influxdb,
+                         creds['influxdb']['database'],
+                         username,
+                         count,
+                         args.verbose)
 
 
-def storeUnfollowCount(connection, database, username, count, verbose=False):
-    """Create a datapoint and write the unfollow count into InfluxDB"""
+def storeUnfollowerCount(connection, database, username, count, verbose=False):
+    """Create a datapoint and write the unfollower count into InfluxDB"""
     debug = True
 
     if verbose:
-        print("Writing the unfollow count to InfluxDB: {}".format(count))
+        print("Writing the unfollower count to InfluxDB: {}".format(count))
 
     json_body = []
     json_body.append(createPoint(username, 'unfollows', count,
@@ -417,10 +415,10 @@ def main():
                            help='Limit API query for followers to X number.')
     followers.set_defaults(func=processFollowers)
 
-    unfollows = subparsers.add_parser(
+    unfollowers = subparsers.add_parser(
         'unfollows',
         description=('Count and store unfollow information since yesterday'))
-    unfollows.set_defaults(func=processUnfollows)
+    unfollowers.set_defaults(func=processUnfollowers)
 
     args = parser.parse_args()
     args.func(args)
