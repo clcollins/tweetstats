@@ -398,7 +398,8 @@ def main():
     unfollowers.set_defaults(func=processUnfollowers)
 
     args = parser.parse_args()
-    args.creds = configparser.ConfigParser().read(args.configfile)
+    args.creds = configparser.ConfigParser()
+    args.creds.read(args.configfile)
     args.func(args)
 
 
