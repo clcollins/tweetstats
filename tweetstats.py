@@ -18,21 +18,6 @@ def getTheTime(delta=0, raw=False):
                 .strftime('%Y-%m-%d %H:%M:%S'))
 
 
-def parseConfig(configfile, verbose=False):
-    """Get authentication data from ENV variables."""
-    if verbose:
-        print("Parsing configfile {conf}".format(conf=configfile))
-
-    config = configparser.ConfigParser()
-    config.read(configfile)
-
-    if verbose:
-        print(("Config sections found: {sections}"
-               .format(sections=config.sections())))
-
-    return config
-
-
 def initAPI(creds, verbose=False):
     """Authenticate and create an API instance."""
     if verbose:
@@ -130,11 +115,6 @@ def getUnfollowers(connection, database, table, verbose=False):
 
     # Drop hours/minutes
     day_before_yesterday = getTheTime(-2, raw=True).date()
-
-    # NOTE: I'm not sure this is working correctly, or an accurate way
-    # to record this data.  A more accurate way would be to have a table with
-    # *every* time the user was seen, or to store the last time the check
-    # was run, and compare against that.
 
     # They left yesterday if last_seen is between two days ago and yesterday
     sql = ("SELECT id, screen_name "
@@ -238,13 +218,12 @@ def processFollowers(args):
 
     table = 'followers'
 
-    creds = parseConfig(args.configfile, args.verbose)
-    followers = getCurrentFollowers(initAPI(creds['twitter'],
+    followers = getCurrentFollowers(initAPI(args.creds['twitter'],
                                             args.verbose),
                                     args.count,
                                     args.verbose)
-    mysql = initMYSQL(creds['mysql'], args.verbose)
-    storeFollowers(mysql, creds['mysql']['database'],
+    mysql = initMYSQL(args.creds['mysql'], args.verbose)
+    storeFollowers(mysql, args.creds['mysql']['database'],
                    table, followers, args.verbose)
 
     # Close conn
@@ -258,20 +237,19 @@ def processUnfollowers(args):
 
     table = 'followers'
 
-    creds = parseConfig(args.configfile, args.verbose)
-    username = (initAPI(creds['twitter'], args.verbose)).me().screen_name
-    mysql = initMYSQL(creds['mysql'], args.verbose)
-    count, unfollowers = getUnfollowers(mysql, creds['mysql']['database'],
+    username = (initAPI(args.creds['twitter'], args.verbose)).me().screen_name
+    mysql = initMYSQL(args.creds['mysql'], args.verbose)
+    count, unfollowers = getUnfollowers(mysql, args.creds['mysql']['database'],
                                         table, args.verbose)
 
-    storeUnfollowers(mysql, creds['mysql']['database'],
+    storeUnfollowers(mysql, args.creds['mysql']['database'],
                      table, unfollowers, args.verbose)
     # Close conn
     mysql.close()
 
-    influxdb = initInfluxDB(creds['influxdb'], args.verbose)
+    influxdb = initInfluxDB(args.creds['influxdb'], args.verbose)
     storeUnfollowerCount(influxdb,
-                         creds['influxdb']['database'],
+                         args.creds['influxdb']['database'],
                          username,
                          count,
                          args.verbose)
@@ -379,12 +357,11 @@ def processMetrics(args):
     """Authenticate and gather metrics."""
     if args.verbose:
         print("Processing Twitter metrics")
-    creds = parseConfig(args.configfile, args.verbose)
-    username, metrics = (getMetricsCount(initAPI(creds['twitter'],
+    username, metrics = (getMetricsCount(initAPI(args.creds['twitter'],
                                          args.verbose), args.verbose))
-    influxdb = initInfluxDB(creds['influxdb'], args.verbose)
+    influxdb = initInfluxDB(args.creds['influxdb'], args.verbose)
     storeMetrics(influxdb,
-                 creds['influxdb']['database'],
+                 args.creds['influxdb']['database'],
                  username,
                  metrics,
                  args.verbose)
@@ -421,14 +398,8 @@ def main():
     unfollowers.set_defaults(func=processUnfollowers)
 
     args = parser.parse_args()
+    args.creds = configparser.ConfigParser().read(args.configfile)
     args.func(args)
-
-    # Test Locally:
-    # sudo podman run -e MYSQL_ROOT_PASSWORD=root  -p 127.0.0.1:3306:3306 \
-    #                 -it docker.io/centos/mariadb-101-centos7:10.1
-
-    # Test Locally:
-    # sudo podman run -p 127.0.0.1:8086:8086 -it docker.io/influxdb:1.7-alpine
 
 
 if __name__ == "__main__":
