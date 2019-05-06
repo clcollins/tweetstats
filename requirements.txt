@@ -4,19 +4,19 @@
 #
 #    pip-compile --output-file requirements.txt requirements.txt
 #
-certifi==2018.11.29
+certifi==2019.3.9
 chardet==3.0.4
-configparser==3.7.1
+configparser==3.7.4
 idna==2.8
-influxdb==5.2.1
+influxdb==5.2.2
 mysql-connector==2.2.9
 oauthlib==3.0.1
 pysocks==1.6.8
 python-dateutil==2.8.0
-pytz==2018.9
-requests-cache==0.4.13
+pytz==2019.1
+requests-cache==0.5.0
 requests-oauthlib==1.2.0
 requests==2.21.0
 six==1.12.0
 tweepy==3.7.0
-urllib3==1.24.1
+urllib3==1.24.3
